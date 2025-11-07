@@ -54,7 +54,7 @@
         document.getElementById('indicators').innerHTML = '';
 
         // === LIVE XAUUSD PRICE (Swissquote – MT5/TradingView Match) ===
-        const priceRes = await fetch('https://forex-data-feed.swissquote.com/public-quotes/bboquotes/instrument/XAU/USD');
+        const priceRes = await fetch('https://api.allorigins.win/raw?url=https://forex-data-feed.swissquote.com/public-quotes/bboquotes/instrument/XAU/USD');
         const priceData = await priceRes.json();
         const bid = priceData[0]?.spreadProfilePrices[0]?.bid;
         const ask = priceData[0]?.spreadProfilePrices[0]?.ask;
@@ -183,3 +183,4 @@ ${reasons.join(' • ')}`;
   </script>
 </body>
 </html>
+
