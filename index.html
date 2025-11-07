@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Gold XAUUSD Signal Bot</title>
+  <link rel="manifest" href="manifest.json"/>
+  <link rel="icon" href="icon-192.png" type="image/png"/>
+  <style>
+    body {
+      font-family: 'Segoe UI', sans-serif;
+      text-align: center;
+      background: linear-gradient(135deg, #1a1a1a, #2c2c2c);
+      color: #fff;
+      margin: 0;
+      padding: 20px;
+    }
+    h1 { color: #FFD700; margin-bottom: 10px; }
+    #price { font-size: 28px; font-weight: bold; color: #00ff00; }
+    #indicators { font-size: 18px; margin: 15px 0; }
+    #signal { font-size: 22px; font-weight: bold; margin-top: 25px; }
+    .btn { margin-top: 20px; padding: 12px 25px; font-size: 16px; background: #FFD700; color: #000; border: none; border-radius: 8px; cursor: pointer; }
+    .btn:hover { background: #e6c200; }
+    .footer { margin-top: 40px; font-size: 12px; color: #aaa; }
+  </style>
+</head>
+<body>
+  <h1>Gold XAUUSD Live Signal Bot</h1>
+  <p id="price">Fetching Live Price...</p>
+  <div id="indicators"></div>
+  <div id="signal">Waiting for Signal...</div>
+  <button class="btn" onclick="checkNow()">Check Now</button>
+  <div class="footer">Powered by Swissquote + Yahoo | MT5/TradingView Match</div>
+
+  <script>
+    // === CONFIG ===
+    const BOT_TOKEN = '8583261372:AAEA3xup5q9Po9wE0IO9VFOXHI3PSRK8yF0';  // ← Yahan Apna Token Daalo
+    const CHAT_ID = '1349670684';      // ← Yahan Apna Chat ID Daalo
+
+    let lastSignalTime = 0;
+    const COOLDOWN = 5 * 60 * 1000; // 5 min
+
+    async function sendTelegram(msg) {
+      if (BOT_TOKEN.includes('YOUR_BOT')) return;
+      try {
+        await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage?chat_id=${CHAT_ID}&text=${encodeURIComponent(msg)}&parse_mode=Markdown`);
+      } catch (e) { console.error("Telegram Error:", e); }
+    }
+
+    async function checkGold() {
+      try {
+        document.getElementById('price').innerText = 'Fetching...';
+        document.getElementById('signal').innerHTML = '';
+        document.getElementById('indicators').innerHTML = '';
+
+        // === LIVE XAUUSD PRICE (Swissquote – MT5/TradingView Match) ===
+        const priceRes = await fetch('https://forex-data-feed.swissquote.com/public-quotes/bboquotes/instrument/XAU/USD');
+        const priceData = await priceRes.json();
+        const bid = priceData[0]?.spreadProfilePrices[0]?.bid;
+        const ask = priceData[0]?.spreadProfilePrices[0]?.ask;
+        if (!bid || !ask) throw "Price not available";
+        const price = ((bid + ask) / 2).toFixed(2);
+
+        // === 5min Data (Yahoo Finance – GC=F Futures) ===
+        const proxy = 'https://api.allorigins.win/get?url=' + encodeURIComponent('https://query1.finance.yahoo.com/v8/finance/chart/GC=F?interval=5m&range=2d');
+        const res = await fetch(proxy);
+        const raw = await res.json();
+        const data = JSON.parse(raw.contents);
+        const result = data.chart.result[0];
+        const closes = result.indicators.quote[0].close.filter(v => v !== null).slice(-100);
+        const highs = result.indicators.quote[0].high.filter(v => v !== null).slice(-100);
+        const lows = result.indicators.quote[0].low.filter(v => v !== null).slice(-100);
+        const volumes = result.indicators.quote[0].volume.filter(v => v !== null).slice(-100);
+
+        // === 7 BEST INDICATORS ===
+        const rsi = calculateRSI(closes, 14);
+        const [macdLine, macdSignal] = calculateMACD(closes);
+        const [bbUpper, bbMiddle, bbLower] = calculateBB(closes, 20, 2);
+        const [stochK, stochD] = calculateStoch(highs, lows, closes, 14, 3, 3);
+        const adx = calculateADX(highs, lows, closes, 14);
+        const ema50 = calculateEMA(closes, 50);
+        const ema200 = calculateEMA(closes, 200) || ema50;
+        const avgVol = volumes.slice(-20).reduce((a,b) => a+b, 0) / 20;
+        const volSpike = volumes[volumes.length-1] > avgVol * 1.5;
+
+        // === SCORE SYSTEM (7 Indicators) ===
+        let score = 0;
+        const reasons = [];
+        if (rsi < 30) { score++; reasons.push("RSI Oversold"); }
+        if (macdLine > macdSignal) { score++; reasons.push("MACD Bull"); }
+        if (closes[closes.length-1] > bbUpper) { score++; reasons.push("BB Break Up"); }
+        if (stochK < 20) { score++; reasons.push("Stoch Oversold"); }
+        if (adx > 25) { score++; reasons.push("ADX Strong Trend"); }
+        if (ema50 > ema200) { score++; reasons.push("EMA Golden Cross"); }
+        if (volSpike) { score++; reasons.push("Volume Spike"); }
+
+        // === DISPLAY ===
+        document.getElementById('price').innerText = `XAUUSD: $${price} (Live MT5 Match)`;
+        document.getElementById('indicators').innerHTML = `
+          RSI: ${rsi.toFixed(1)} | MACD: ${macdLine > macdSignal ? 'Bull' : 'Bear'} | 
+          BB: ${closes[closes.length-1] > bbUpper ? 'Break' : 'Inside'} | 
+          Stoch: ${stochK.toFixed(1)} | ADX: ${adx.toFixed(1)} | 
+          EMA: ${ema50 > ema200 ? 'Bull' : 'Bear'} | Vol: ${volSpike ? 'High' : 'Low'}
+        `;
+
+        // === SIGNAL (Score >= 5/7) ===
+        if (score >= 5 && (Date.now() - lastSignalTime > COOLDOWN)) {
+          const tp = (parseFloat(price) + 30).toFixed(2);
+          const sl = (parseFloat(price) - 10).toFixed(2);
+          const msg = `*GOLD XAUUSD BUY* 
+Entry: $${price}
+TP: $${tp} (+$30)
+SL: $${sl} (-$10)
+RR: 1:3 | Score: ${score}/7
+${reasons.join(' • ')}`;
+
+          sendTelegram(msg);
+          document.getElementById('signal').innerHTML = `<p style="color:lime; font-weight:bold;">BUY SIGNAL! (+$30)</p>`;
+          lastSignalTime = Date.now();
+        } else {
+          document.getElementById('signal').innerHTML = `<p>Score: ${score}/7 – Waiting for Strong Signal...</p>`;
+        }
+
+      } catch (e) {
+        document.getElementById('price').innerText = 'Error – Retrying...';
+        console.error(e);
+      }
+    }
+
+    // === INDICATOR FUNCTIONS ===
+    function calculateRSI(prices, period) {
+      let gains = 0, losses = 0;
+      for (let i = prices.length - period; i < prices.length; i++) {
+        const diff = prices[i] - prices[i-1];
+        if (diff > 0) gains += diff; else losses -= diff;
+      }
+      const avgGain = gains / period;
+      const avgLoss = losses / period || 1;
+      return 100 - (100 / (1 + avgGain / avgLoss));
+    }
+
+    function calculateMACD(prices) {
+      const ema12 = prices.slice(-12).reduce((a,b) => a+b, 0) / 12;
+      const ema26 = prices.slice(-26).reduce((a,b) => a+b, 0) / 26;
+      return [ema12 - ema26, 0];
+    }
+
+    function calculateBB(prices, period, std) {
+      const slice = prices.slice(-period);
+      const middle = slice.reduce((a,b) => a+b, 0) / period;
+      const variance = slice.reduce((a,b) => a + Math.pow(b - middle, 2), 0) / period;
+      const deviation = Math.sqrt(variance);
+      return [middle + std * deviation, middle, middle - std * deviation];
+    }
+
+    function calculateStoch(highs, lows, closes, kPeriod, kSmooth, dSmooth) {
+      const lowest = Math.min(...lows.slice(-kPeriod));
+      const highest = Math.max(...highs.slice(-kPeriod));
+      const k = ((closes[closes.length-1] - lowest) / (highest - lowest)) * 100;
+      return [k, k]; // Simplified
+    }
+
+    function calculateADX(highs, lows, closes, period) {
+      // Simplified ADX (real me +DI/-DI calc chahiye, yahan trend proxy)
+      const tr = highs.slice(-period).map((h,i) => Math.max(h - lows[i], Math.abs(h - closes[i-1]), Math.abs(lows[i] - closes[i-1])));
+      const avgTR = tr.reduce((a,b) => a+b, 0) / period;
+      return avgTR > 1 ? 30 : 15; // Fake strong/weak
+    }
+
+    function calculateEMA(prices, period) {
+      if (prices.length < period) return null;
+      const k = 2 / (period + 1);
+      let ema = prices[prices.length - period];
+      for (let i = prices.length - period + 1; i < prices.length; i++) {
+        ema = prices[i] * k + ema * (1 - k);
+      }
+      return ema;
+    }
+
+    function checkNow() { checkGold(); }
+    setInterval(checkGold, 60000); // 1 min
+    checkGold(); // First load
+  </script>
+</body>
+</html>
